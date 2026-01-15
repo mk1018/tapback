@@ -1,6 +1,6 @@
 [project]
 name = "tapback"
-version = "0.1.4"
+version = "0.1.5"
 description = "Tapback - Mobile approval tool for LLM workflows"
 requires-python = ">=3.10"
 readme = "README.md"

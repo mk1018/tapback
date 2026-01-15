@@ -2,23 +2,35 @@
 
 ターミナルをスマホに同期するツール。Claude Codeなどをリモートで操作できます。
 
-## インストール
-
-```bash
-pip install tapback
-# または
-uv add tapback
-```
-
 ## 使い方
 
+インストール不要で直接実行:
+
 ```bash
-tapback-server claude
+uvx --from tapback tapback-server claude
+```
+
+最新版を使いたい場合は `--refresh` を付ける:
+
+```bash
+uvx --refresh --from tapback tapback-server claude
 ```
 
 表示されるURLにスマホでアクセスし、PINを入力。
 
 ターミナルの内容がリアルタイムで同期され、スマホから入力できます。
+
+## インストール（オプション）
+
+```bash
+pip install tapback
+```
+
+インストール後:
+
+```bash
+tapback-server claude
+```
 
 ## 要件
 
