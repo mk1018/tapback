@@ -37,6 +37,14 @@ tapback-server claude
 - tmux (`brew install tmux`)
 - スマホとMacが同じWi-Fiネットワーク（または ngrok）
 
+## ローカルで確認
+
+tmuxセッションに直接アタッチして確認:
+
+```bash
+tmux attach -t tapback
+```
+
 ## 外部ネットワークから使う
 
 外出先など別ネットワークから使う場合は ngrok でトンネリング:
