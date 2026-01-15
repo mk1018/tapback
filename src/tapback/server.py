@@ -428,8 +428,7 @@ def status():
 
 
 def get_local_ips():
-    """全てのローカルIPアドレスを取得"""
-    import socket
+    """全てのローカルIPアドレスとインターフェース名を取得"""
     import subprocess
 
     ips = []
@@ -437,21 +436,33 @@ def get_local_ips():
         result = subprocess.run(
             ["ifconfig"], capture_output=True, text=True, timeout=5
         )
+        current_iface = ""
         for line in result.stdout.split("\n"):
+            if line and not line.startswith("\t") and not line.startswith(" "):
+                current_iface = line.split(":")[0]
             if "inet " in line and "127.0.0.1" not in line:
                 parts = line.strip().split()
                 idx = parts.index("inet") + 1
                 if idx < len(parts):
                     ip = parts[idx]
-                    # 192.168.x.x を優先
-                    if ip.startswith("192.168."):
-                        ips.insert(0, ip)
+                    # インターフェース名をわかりやすく
+                    if current_iface.startswith("en"):
+                        label = "Wi-Fi"
+                    elif current_iface.startswith("utun") or current_iface.startswith("tun"):
+                        label = "VPN"
+                    elif current_iface.startswith("bridge"):
+                        label = "VM"
                     else:
-                        ips.append(ip)
+                        label = current_iface
+                    # Wi-Fi (192.168.x.x) を優先
+                    if ip.startswith("192.168.0."):
+                        ips.insert(0, (ip, label))
+                    else:
+                        ips.append((ip, label))
     except:
         pass
 
-    return ips if ips else ["127.0.0.1"]
+    return ips if ips else [("127.0.0.1", "Local")]
 
 
 def main():
@@ -482,9 +493,9 @@ def main():
     print(f"\n{'=' * 50}")
     print(f"  Tapback Server")
     print(f"{'=' * 50}")
-    print(f"  Local:   http://127.0.0.1:{args.port}")
-    for ip in local_ips:
-        print(f"  Network: http://{ip}:{args.port}")
+    print(f"  Local: http://127.0.0.1:{args.port}")
+    for ip, label in local_ips:
+        print(f"  {label}: http://{ip}:{args.port}")
     if session_pin:
         print(f"{'=' * 50}")
         print(f"  PIN: {session_pin}")
