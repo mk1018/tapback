@@ -3,14 +3,11 @@
 Tapback Server - tmuxセッション経由でターミナルを同期
 """
 
-import os
 import sys
 import subprocess
 import secrets
 import random
 import json
-import time
-import threading
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -179,7 +176,7 @@ async def ws_endpoint(websocket: WebSocket):
                     last_output = output
                     try:
                         await websocket.send_json({"t": "o", "c": output})
-                    except:
+                    except Exception:
                         break
 
         poll_task = asyncio.create_task(poll_output())
@@ -200,25 +197,7 @@ async def ws_endpoint(websocket: WebSocket):
             connected_clients.remove(websocket)
 
 
-def output_watcher():
-    """定期的に出力を監視してクライアントに送信"""
-    import asyncio
-
-    last_output = ""
-    while True:
-        time.sleep(1)
-        try:
-            output = tmux_capture()
-            if output != last_output:
-                last_output = output
-                # WebSocketで送信（同期的には難しいのでスキップ）
-        except:
-            pass
-
-
 def get_local_ip():
-    import subprocess
-
     try:
         result = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=5)
         for line in result.stdout.split("\n"):
@@ -230,7 +209,7 @@ def get_local_ip():
                     if ip.startswith("192.168."):
                         return ip
         return "127.0.0.1"
-    except:
+    except Exception:
         return "127.0.0.1"
 
 
@@ -296,7 +275,7 @@ def main():
 
     ip = get_local_ip()
     print(f"\n{'=' * 50}")
-    print(f"  Tapback")
+    print("  Tapback")
     print(f"{'=' * 50}")
     print(f"  http://{ip}:{args.port}")
     if session_pin:

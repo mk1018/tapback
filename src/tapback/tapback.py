@@ -38,7 +38,7 @@ def get_server_url() -> Optional[str]:
         with open(info_path) as f:
             info = json.load(f)
             return info.get("url")
-    except:
+    except Exception:
         return None
 
 
@@ -157,7 +157,7 @@ def main():
 
     if not args.quiet:
         print(f"質問を送信中: {args.message}", file=sys.stderr)
-        print(f"スマホで回答してください...", file=sys.stderr)
+        print("スマホで回答してください...", file=sys.stderr)
 
     try:
         result = ask(

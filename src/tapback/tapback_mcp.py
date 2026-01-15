@@ -53,7 +53,7 @@ def _ask(message: str, q_type: str, timeout: int) -> str:
             timeout=10,
         )
     except requests.exceptions.ConnectionError:
-        return f"[ERROR] tapback-serverに接続できません。先に 'uv run tapback-server' を実行してください。"
+        return "[ERROR] tapback-serverに接続できません。先に 'uv run tapback-server' を実行してください。"
 
     if response.status_code != 200:
         return f"[ERROR] 質問の登録に失敗: {response.text}"
