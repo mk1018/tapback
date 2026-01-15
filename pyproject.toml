@@ -1,7 +1,7 @@
 [project]
 name = "tapback"
 version = "0.1.0"
-description = "Human-in-the-Loop Input Tool - スマホからYes/Noやテキストを返せるツール"
+description = "Tapback - Mobile approval tool for LLM workflows"
 requires-python = ">=3.10"
 readme = "README.md"
 license = "MIT"
