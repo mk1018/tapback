@@ -51,14 +51,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,monospace;background:#0d1117;c
 <div id="term"></div>
 <div id="in">
 <div class="row quick">
+<button class="btn bq" data-v="0">0</button>
 <button class="btn bq" data-v="1">1</button>
 <button class="btn bq" data-v="2">2</button>
 <button class="btn bq" data-v="3">3</button>
+<button class="btn bq" data-v="4">4</button>
 </div>
 <div class="row">
 <input type="text" id="txt" placeholder="入力..." autocomplete="off">
 <button class="btn bsend" id="b4">送信</button>
-<button class="btn benter" id="b3">⏎</button>
 </div>
 </div>
 <script>
@@ -73,9 +74,8 @@ ws.onclose=()=>{st.textContent='再接続...';st.className='s off';setTimeout(co
 ws.onerror=()=>ws.close();
 }
 function send(v){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'i',c:v}))}
-document.getElementById('b3').onclick=()=>send('');
-document.getElementById('b4').onclick=()=>{lastInput=txt.value;send(txt.value)};
-txt.onkeypress=(e)=>{if(e.key==='Enter'){lastInput=txt.value;send(txt.value)}};
+document.getElementById('b4').onclick=()=>{lastInput=txt.value;send(txt.value);txt.value=''};
+txt.onkeypress=(e)=>{if(e.key==='Enter'){lastInput=txt.value;send(txt.value);txt.value=''}};
 document.querySelectorAll('.bq').forEach(b=>b.onclick=()=>send(b.dataset.v));
 connect();
 </script>
@@ -106,8 +106,14 @@ body{{font-family:sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh;d
 
 def tmux_send(text: str):
     """tmuxセッションにキー入力を送信"""
+    if text:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", SESSION_NAME, "-l", text],
+            capture_output=True,
+            text=True,
+        )
     result = subprocess.run(
-        ["tmux", "send-keys", "-t", SESSION_NAME, text, "Enter"],
+        ["tmux", "send-keys", "-t", SESSION_NAME, "Enter"],
         capture_output=True,
         text=True,
     )
@@ -268,11 +274,10 @@ def main():
     # 既存のセッションを終了
     subprocess.run(["tmux", "kill-session", "-t", SESSION_NAME], capture_output=True)
 
-    # 新しいtmuxセッションを作成してコマンドを実行
+    # 新しいtmuxセッションを作成（シェルが残るのでコマンド終了後も維持される）
     cmd = " ".join(args.command)
-    subprocess.run(["tmux", "new-session", "-d", "-s", SESSION_NAME, cmd])
-    # コマンド終了後もセッションを維持
-    subprocess.run(["tmux", "set-option", "-t", SESSION_NAME, "remain-on-exit", "on"])
+    subprocess.run(["tmux", "new-session", "-d", "-s", SESSION_NAME])
+    subprocess.run(["tmux", "send-keys", "-t", SESSION_NAME, cmd, "Enter"])
 
     save_server_info(args.port)
     atexit.register(cleanup)
