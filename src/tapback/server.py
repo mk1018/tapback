@@ -427,18 +427,31 @@ def status():
         return jsonify({"question": current_question})
 
 
-def get_local_ip():
-    """ローカルIPアドレスを取得"""
+def get_local_ips():
+    """全てのローカルIPアドレスを取得"""
     import socket
+    import subprocess
 
+    ips = []
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
+        result = subprocess.run(
+            ["ifconfig"], capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.split("\n"):
+            if "inet " in line and "127.0.0.1" not in line:
+                parts = line.strip().split()
+                idx = parts.index("inet") + 1
+                if idx < len(parts):
+                    ip = parts[idx]
+                    # 192.168.x.x を優先
+                    if ip.startswith("192.168."):
+                        ips.insert(0, ip)
+                    else:
+                        ips.append(ip)
     except:
-        return "127.0.0.1"
+        pass
+
+    return ips if ips else ["127.0.0.1"]
 
 
 def main():
@@ -465,12 +478,13 @@ def main():
     else:
         session_pin = f"{random.randint(0, 9999):04d}"
 
-    local_ip = get_local_ip()
+    local_ips = get_local_ips()
     print(f"\n{'=' * 50}")
     print(f"  Tapback Server")
     print(f"{'=' * 50}")
     print(f"  Local:   http://127.0.0.1:{args.port}")
-    print(f"  Network: http://{local_ip}:{args.port}")
+    for ip in local_ips:
+        print(f"  Network: http://{ip}:{args.port}")
     if session_pin:
         print(f"{'=' * 50}")
         print(f"  PIN: {session_pin}")
