@@ -236,7 +236,7 @@ def main():
     parser.add_argument("--port", "-p", type=int, default=8080)
     parser.add_argument("--no-auth", action="store_true")
     parser.add_argument("--kill", "-k", action="store_true")
-    parser.add_argument("command", nargs="*")
+    parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
     if args.kill:
