@@ -1,65 +1,33 @@
 # Tapback
 
-スマホからYes/Noやテキストを返せるHuman-in-the-Loopツール。
-
-Claude CodeなどのLLMツールと連携し、スマホから承認・入力ができます。
+ターミナルをスマホに同期するツール。Claude Codeなどをリモートで操作できます。
 
 ## インストール
 
 ```bash
-uvx tapback-server  # サーバー起動
-```
-
-## Claude Code連携
-
-プロジェクトの `.mcp.json` に以下を追加:
-
-```json
-{
-  "mcpServers": {
-    "tapback": {
-      "command": "uvx",
-      "args": ["tapback"]
-    }
-  }
-}
+pip install tapback
+# または
+uv add tapback
 ```
 
 ## 使い方
 
-### 1. サーバー起動
-
 ```bash
-uvx tapback-server
+tapback-server claude
 ```
 
-表示されるPINをメモし、Network URLにスマホでアクセス。
+表示されるURLにスマホでアクセスし、PINを入力。
 
-### 2. Claude Codeで使用
+ターミナルの内容がリアルタイムで同期され、スマホから入力できます。
 
-Claude Codeが `ask_yesno` / `ask_text` ツールを呼び出すと、スマホに質問が表示されます。
+## 要件
 
-### CLIとして使用
+- tmux (`brew install tmux`)
+- スマホとMacが同じWi-Fiネットワーク（または ngrok）
 
-```bash
-uvx tapback "削除しますか？" --type yesno
-uvx tapback "修正内容を入力" --type text
-```
+## 外部ネットワークから使う
 
-### Pythonから使用
-
-```python
-from tapback import ask
-
-if ask("実行しますか？", type="yesno") == "yes":
-    execute()
-```
-
-## ネットワーク要件
-
-スマホとMacが**同じWi-Fiネットワーク**に接続されている必要があります。
-
-外出先など別ネットワークから使う場合は、ngrokでトンネリングしてください:
+外出先など別ネットワークから使う場合は ngrok でトンネリング:
 
 ```bash
 ngrok http 8080
@@ -70,8 +38,9 @@ ngrok http 8080
 ## オプション
 
 ```bash
-uvx tapback-server --port 9000      # ポート変更
-uvx tapback-server --no-auth        # PIN認証を無効化
+tapback-server --port 9000 claude   # ポート変更
+tapback-server --no-auth claude     # PIN認証を無効化
+tapback-server --kill               # 既存セッションを終了
 ```
 
 ## License

@@ -18,7 +18,10 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "flask>=3.1.2",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "python-multipart>=0.0.20",
+    "websockets>=14.0",
     "mcp>=1.25.0",
     "requests>=2.32.5",
 ]

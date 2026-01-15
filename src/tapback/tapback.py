@@ -142,7 +142,9 @@ def main():
         help="サーバーURL (default: .tapback/server.jsonから取得)",
     )
     parser.add_argument("-q", "--quiet", action="store_true", help="結果のみ出力")
-    parser.add_argument("--silent", action="store_true", help="サーバー未起動時は静かに終了")
+    parser.add_argument(
+        "--silent", action="store_true", help="サーバー未起動時は静かに終了"
+    )
 
     args = parser.parse_args()
 

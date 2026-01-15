@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "tapback": {
-      "command": "uvx",
-      "args": ["--from", "tapback", "tapback-mcp"]
-    }
-  }
-}
