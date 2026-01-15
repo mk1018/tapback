@@ -279,9 +279,14 @@ HTML_TEMPLATE = """
             status.classList.remove('hidden');
         }
 
-        // 5秒ごとに新しい質問をチェック
+        // 質問が来たら自動で画面更新
         if (!questionId) {
-            setInterval(() => location.reload(), 5000);
+            const eventSource = new EventSource('/stream');
+            eventSource.onmessage = function(e) {
+                if (e.data === 'new_question') {
+                    location.reload();
+                }
+            };
         }
     </script>
 </body>
@@ -420,6 +425,23 @@ def answer():
     return jsonify({"success": True})
 
 
+@app.route("/stream")
+def stream():
+    """新しい質問をリアルタイムで通知"""
+    def generate():
+        last_id = None
+        while True:
+            with question_lock:
+                if current_question and current_question["status"] == "waiting":
+                    if current_question["id"] != last_id:
+                        last_id = current_question["id"]
+                        yield f"data: new_question\n\n"
+            time.sleep(1)
+
+    from flask import Response
+    return Response(generate(), mimetype="text/event-stream")
+
+
 @app.route("/status")
 def status():
     """現在の状態を取得（デバッグ用）"""
@@ -465,11 +487,34 @@ def get_local_ips():
     return ips if ips else [("127.0.0.1", "Local")]
 
 
+def save_server_info(port: int):
+    """サーバー情報を.tapback/に保存"""
+    import os
+    import json
+
+    tapback_dir = os.path.join(os.getcwd(), ".tapback")
+    os.makedirs(tapback_dir, exist_ok=True)
+
+    info = {"port": port, "url": f"http://127.0.0.1:{port}"}
+    with open(os.path.join(tapback_dir, "server.json"), "w") as f:
+        json.dump(info, f)
+
+
+def cleanup_server_info():
+    """サーバー情報を削除"""
+    import os
+
+    info_path = os.path.join(os.getcwd(), ".tapback", "server.json")
+    if os.path.exists(info_path):
+        os.remove(info_path)
+
+
 def main():
     """CLI エントリーポイント"""
     global session_pin
 
     import argparse
+    import atexit
 
     parser = argparse.ArgumentParser(description="Tapback Server")
     parser.add_argument(
@@ -480,6 +525,10 @@ def main():
     )
     parser.add_argument("--no-auth", action="store_true", help="PIN認証を無効化")
     args = parser.parse_args()
+
+    # サーバー情報を保存
+    save_server_info(args.port)
+    atexit.register(cleanup_server_info)
 
     # PIN生成
     if args.no_auth:
