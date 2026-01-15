@@ -526,7 +526,8 @@ def main():
     parser.add_argument("--no-auth", action="store_true", help="PIN認証を無効化")
     args = parser.parse_args()
 
-    # サーバー情報を保存
+    # 古いサーバー情報を削除してから保存
+    cleanup_server_info()
     save_server_info(args.port)
     atexit.register(cleanup_server_info)
 
