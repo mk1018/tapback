@@ -43,11 +43,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,monospace;background:#0d1117;c
 .btn{padding:12px 18px;font-size:15px;font-weight:600;border:none;border-radius:10px;cursor:pointer}
 .bsend{background:#8b5cf6;color:#fff}
 .benter{background:#30363d;color:#c9d1d9}
+.quick{margin-bottom:8px}
+.bq{flex:1;background:#21262d;color:#c9d1d9}
 </style></head>
 <body>
 <div id="h"><span class="t">Tapback</span><span class="s" id="st">...</span></div>
 <div id="term"></div>
 <div id="in">
+<div class="row quick">
+<button class="btn bq" data-v="1">1</button>
+<button class="btn bq" data-v="2">2</button>
+<button class="btn bq" data-v="3">3</button>
+</div>
 <div class="row">
 <input type="text" id="txt" placeholder="入力..." autocomplete="off">
 <button class="btn bsend" id="b4">送信</button>
@@ -56,19 +63,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,monospace;background:#0d1117;c
 </div>
 <script>
 const term=document.getElementById('term'),txt=document.getElementById('txt'),st=document.getElementById('st');
-let ws;
+let ws,lastInput='';
 function connect(){
 const p=location.protocol==='https:'?'wss:':'ws:';
 ws=new WebSocket(p+'//'+location.host+'/ws');
-ws.onopen=()=>{st.textContent='接続済';st.className='s on'};
+ws.onopen=()=>{st.textContent='接続済';st.className='s on';txt.value=lastInput};
 ws.onmessage=(e)=>{const d=JSON.parse(e.data);if(d.t==='o'){term.textContent=d.c;term.scrollTop=term.scrollHeight}};
 ws.onclose=()=>{st.textContent='再接続...';st.className='s off';setTimeout(connect,2000)};
 ws.onerror=()=>ws.close();
 }
 function send(v){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'i',c:v}))}
 document.getElementById('b3').onclick=()=>send('');
-document.getElementById('b4').onclick=()=>{send(txt.value);txt.value=''};
-txt.onkeypress=(e)=>{if(e.key==='Enter'){send(txt.value);txt.value=''}};
+document.getElementById('b4').onclick=()=>{lastInput=txt.value;send(txt.value)};
+txt.onkeypress=(e)=>{if(e.key==='Enter'){lastInput=txt.value;send(txt.value)}};
+document.querySelectorAll('.bq').forEach(b=>b.onclick=()=>send(b.dataset.v));
 connect();
 </script>
 </body></html>"""
