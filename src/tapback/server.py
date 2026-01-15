@@ -427,18 +427,42 @@ def status():
         return jsonify({"question": current_question})
 
 
-def get_local_ip():
-    """ローカルIPアドレスを取得"""
-    import socket
+def get_local_ips():
+    """全てのローカルIPアドレスとインターフェース名を取得"""
+    import subprocess
 
+    ips = []
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
+        result = subprocess.run(
+            ["ifconfig"], capture_output=True, text=True, timeout=5
+        )
+        current_iface = ""
+        for line in result.stdout.split("\n"):
+            if line and not line.startswith("\t") and not line.startswith(" "):
+                current_iface = line.split(":")[0]
+            if "inet " in line and "127.0.0.1" not in line:
+                parts = line.strip().split()
+                idx = parts.index("inet") + 1
+                if idx < len(parts):
+                    ip = parts[idx]
+                    # インターフェース名をわかりやすく
+                    if current_iface.startswith("en"):
+                        label = "Wi-Fi"
+                    elif current_iface.startswith("utun") or current_iface.startswith("tun"):
+                        label = "VPN"
+                    elif current_iface.startswith("bridge"):
+                        label = "VM"
+                    else:
+                        label = current_iface
+                    # Wi-Fi (192.168.x.x) を優先
+                    if ip.startswith("192.168.0."):
+                        ips.insert(0, (ip, label))
+                    else:
+                        ips.append((ip, label))
     except:
-        return "127.0.0.1"
+        pass
+
+    return ips if ips else [("127.0.0.1", "Local")]
 
 
 def main():
@@ -465,12 +489,13 @@ def main():
     else:
         session_pin = f"{random.randint(0, 9999):04d}"
 
-    local_ip = get_local_ip()
+    local_ips = get_local_ips()
     print(f"\n{'=' * 50}")
     print(f"  Tapback Server")
     print(f"{'=' * 50}")
-    print(f"  Local:   http://127.0.0.1:{args.port}")
-    print(f"  Network: http://{local_ip}:{args.port}")
+    print(f"  Local: http://127.0.0.1:{args.port}")
+    for ip, label in local_ips:
+        print(f"  {label}: http://{ip}:{args.port}")
     if session_pin:
         print(f"{'=' * 50}")
         print(f"  PIN: {session_pin}")
