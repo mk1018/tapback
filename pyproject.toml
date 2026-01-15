@@ -1,6 +1,6 @@
 [project]
 name = "tapback"
-version = "0.1.1"
+version = "0.1.2"
 description = "Tapback - Mobile approval tool for LLM workflows"
 requires-python = ">=3.10"
 readme = "README.md"
@@ -25,8 +25,8 @@ dependencies = [
 
 [project.scripts]
 tapback = "tapback:main"
-tapback-server = "server:main"
-tapback-mcp = "tapback_mcp:mcp.run"
+tapback-server = "tapback.server:main"
+tapback-mcp = "tapback.tapback_mcp:mcp.run"
 
 [project.urls]
 Homepage = "https://github.com/mk1018/tapback"
