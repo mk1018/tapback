@@ -22,6 +22,26 @@ DEFAULT_SERVER = "http://127.0.0.1:8080"
 DEFAULT_TIMEOUT = 300
 
 
+def get_server_url() -> Optional[str]:
+    """
+    .tapback/server.jsonからサーバーURLを取得
+    存在しなければNoneを返す
+    """
+    import os
+    import json
+
+    info_path = os.path.join(os.getcwd(), ".tapback", "server.json")
+    if not os.path.exists(info_path):
+        return None
+
+    try:
+        with open(info_path) as f:
+            info = json.load(f)
+            return info.get("url")
+    except Exception:
+        return None
+
+
 class TapbackError(Exception):
     """Tapback エラー"""
 
@@ -118,23 +138,33 @@ def main():
     parser.add_argument(
         "-s",
         "--server",
-        default=DEFAULT_SERVER,
-        help=f"サーバーURL (default: {DEFAULT_SERVER})",
+        default=None,
+        help="サーバーURL (default: .tapback/server.jsonから取得)",
     )
     parser.add_argument("-q", "--quiet", action="store_true", help="結果のみ出力")
+    parser.add_argument(
+        "--silent", action="store_true", help="サーバー未起動時は静かに終了"
+    )
 
     args = parser.parse_args()
 
+    # サーバーURLを決定
+    server = args.server or get_server_url() or DEFAULT_SERVER
+
+    # --silent モード: サーバー情報がなければ終了
+    if args.silent and not get_server_url():
+        sys.exit(0)
+
     if not args.quiet:
         print(f"質問を送信中: {args.message}", file=sys.stderr)
-        print(f"スマホで回答してください...", file=sys.stderr)
+        print("スマホで回答してください...", file=sys.stderr)
 
     try:
         result = ask(
             message=args.message,
             type=args.type,
             timeout=args.timeout,
-            server=args.server,
+            server=server,
         )
 
         print(result)
@@ -150,6 +180,8 @@ def main():
         sys.exit(2)
 
     except TapbackError as e:
+        if args.silent:
+            sys.exit(0)
         print(f"エラー: {e}", file=sys.stderr)
         sys.exit(3)
 

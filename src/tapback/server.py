@@ -1,509 +1,290 @@
 #!/usr/bin/env python3
 """
-Tapback Server - Human-in-the-Loop Input Tool
-スマホから Yes/No または自由テキストを返せるローカルサーバー
+Tapback Server - tmuxセッション経由でターミナルを同期
 """
 
-import uuid
-import time
-import random
+import sys
+import subprocess
 import secrets
-import threading
-from flask import Flask, request, jsonify, render_template_string, make_response
+import random
+import json
+from pathlib import Path
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
+import uvicorn
 
-app = Flask(__name__)
-app.secret_key = secrets.token_hex(16)
+app = FastAPI()
 
-# 状態管理（MVP: メモリ内で1件のみ）
-current_question = None
-question_lock = threading.Lock()
+SESSION_NAME = "tapback"
+terminal_output = []
+MAX_BUFFER = 200
+connected_clients: list[WebSocket] = []
+session_pin = None
+authenticated_tokens = set()
 
-# セキュリティ: PIN認証
-session_pin = None  # サーバー起動時に生成
-authenticated_tokens = set()  # 認証済みトークン
-
-# PIN入力UI
-PIN_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tapback - 認証</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a2e;
-            color: #eee;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .container { max-width: 400px; width: 100%; text-align: center; }
-        .logo { font-size: 2rem; margin-bottom: 1rem; color: #8b5cf6; }
-        .subtitle { color: #888; margin-bottom: 2rem; }
-        .pin-input {
-            width: 100%;
-            padding: 1.5rem;
-            font-size: 2rem;
-            text-align: center;
-            letter-spacing: 1rem;
-            border: 2px solid #333;
-            border-radius: 12px;
-            background: #16213e;
-            color: #eee;
-            margin-bottom: 1rem;
-        }
-        .pin-input:focus { outline: none; border-color: #8b5cf6; }
-        .btn {
-            width: 100%;
-            padding: 1.2rem;
-            font-size: 1.2rem;
-            font-weight: bold;
-            border: none;
-            border-radius: 12px;
-            background: #8b5cf6;
-            color: white;
-            cursor: pointer;
-        }
-        .btn:active { transform: scale(0.98); }
-        .error { color: #ef4444; margin-top: 1rem; }
-    </style>
-</head>
+HTML = """<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Tapback</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,monospace;background:#0d1117;color:#c9d1d9;display:flex;flex-direction:column}
+#h{padding:10px 14px;background:#161b22;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+#h .t{color:#8b5cf6;font-weight:bold;font-size:18px}
+#h .s{font-size:13px}
+.on{color:#3fb950}.off{color:#f85149}
+#term{flex:1;overflow-y:auto;padding:14px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-all;min-height:0;font-family:monospace}
+#in{padding:12px;background:#161b22;border-top:1px solid #30363d;flex-shrink:0}
+.row{display:flex;gap:8px;align-items:center}
+#txt{flex:1;padding:12px 14px;font-size:16px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:10px;min-width:0}
+#txt:focus{outline:none;border-color:#8b5cf6}
+.btn{padding:12px 18px;font-size:15px;font-weight:600;border:none;border-radius:10px;cursor:pointer}
+.bsend{background:#8b5cf6;color:#fff}
+.benter{background:#30363d;color:#c9d1d9}
+</style></head>
 <body>
-    <div class="container">
-        <div class="logo">Tapback</div>
-        <div class="subtitle">ターミナルに表示されたPINを入力</div>
-        <form method="POST" action="/auth">
-            <input type="text" name="pin" class="pin-input" maxlength="4" pattern="[0-9]{4}"
-                   inputmode="numeric" autocomplete="off" placeholder="0000" required>
-            <button type="submit" class="btn">認証</button>
-        </form>
-        {% if error %}<div class="error">{{ error }}</div>{% endif %}
-    </div>
-</body>
-</html>
-"""
+<div id="h"><span class="t">Tapback</span><span class="s" id="st">...</span></div>
+<div id="term"></div>
+<div id="in">
+<div class="row">
+<input type="text" id="txt" placeholder="入力..." autocomplete="off">
+<button class="btn bsend" id="b4">送信</button>
+<button class="btn benter" id="b3">⏎</button>
+</div>
+</div>
+<script>
+const term=document.getElementById('term'),txt=document.getElementById('txt'),st=document.getElementById('st');
+let ws;
+function connect(){
+const p=location.protocol==='https:'?'wss:':'ws:';
+ws=new WebSocket(p+'//'+location.host+'/ws');
+ws.onopen=()=>{st.textContent='接続済';st.className='s on'};
+ws.onmessage=(e)=>{const d=JSON.parse(e.data);if(d.t==='o'){term.textContent=d.c;term.scrollTop=term.scrollHeight}};
+ws.onclose=()=>{st.textContent='再接続...';st.className='s off';setTimeout(connect,2000)};
+ws.onerror=()=>ws.close();
+}
+function send(v){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'i',c:v}))}
+document.getElementById('b3').onclick=()=>send('');
+document.getElementById('b4').onclick=()=>{send(txt.value);txt.value=''};
+txt.onkeypress=(e)=>{if(e.key==='Enter'){send(txt.value);txt.value=''}};
+connect();
+</script>
+</body></html>"""
 
-# スマホ用UI HTML
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tapback</title>
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a2e;
-            color: #eee;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .container {
-            max-width: 500px;
-            width: 100%;
-            text-align: center;
-        }
-        .logo {
-            font-size: 2rem;
-            margin-bottom: 2rem;
-            color: #8b5cf6;
-        }
-        .message {
-            font-size: 1.5rem;
-            line-height: 1.6;
-            margin-bottom: 2rem;
-            padding: 1.5rem;
-            background: #16213e;
-            border-radius: 16px;
-            word-break: break-word;
-        }
-        .no-question {
-            color: #888;
-            font-size: 1.2rem;
-        }
-        .buttons {
-            display: flex;
-            gap: 1rem;
-            justify-content: center;
-        }
-        .btn {
-            padding: 1.5rem 3rem;
-            font-size: 1.5rem;
-            font-weight: bold;
-            border: none;
-            border-radius: 16px;
-            cursor: pointer;
-            transition: transform 0.1s, opacity 0.1s;
-            min-width: 120px;
-        }
-        .btn:active {
-            transform: scale(0.95);
-        }
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        .btn-yes {
-            background: #22c55e;
-            color: white;
-        }
-        .btn-no {
-            background: #ef4444;
-            color: white;
-        }
-        .btn-submit {
-            background: #8b5cf6;
-            color: white;
-            width: 100%;
-        }
-        .text-input {
-            width: 100%;
-            padding: 1rem;
-            font-size: 1.2rem;
-            border: 2px solid #333;
-            border-radius: 12px;
-            background: #16213e;
-            color: #eee;
-            resize: vertical;
-            min-height: 120px;
-            margin-bottom: 1rem;
-        }
-        .text-input:focus {
-            outline: none;
-            border-color: #8b5cf6;
-        }
-        .status {
-            margin-top: 2rem;
-            padding: 1rem;
-            border-radius: 12px;
-            font-size: 1.2rem;
-        }
-        .status-success {
-            background: #22c55e33;
-            color: #22c55e;
-        }
-        .status-error {
-            background: #ef444433;
-            color: #ef4444;
-        }
-        .hidden {
-            display: none;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="logo">Tapback</div>
-
-        <div id="question-area">
-            {% if question %}
-                <div class="message">{{ question.message }}</div>
-
-                {% if question.type == 'yesno' %}
-                <div class="buttons">
-                    <button class="btn btn-yes" onclick="sendAnswer('yes')">YES</button>
-                    <button class="btn btn-no" onclick="sendAnswer('no')">NO</button>
-                </div>
-                {% else %}
-                <textarea class="text-input" id="text-answer" placeholder="回答を入力..."></textarea>
-                <button class="btn btn-submit" onclick="sendTextAnswer()">送信</button>
-                {% endif %}
-            {% else %}
-                <div class="no-question">待機中の質問はありません</div>
-            {% endif %}
-        </div>
-
-        <div id="status" class="status hidden"></div>
-    </div>
-
-    <script>
-        const questionId = "{{ question.id if question else '' }}";
-        const authToken = "{{ token }}";
-
-        async function sendAnswer(answer) {
-            if (!questionId) return;
-
-            const buttons = document.querySelectorAll('.btn');
-            buttons.forEach(btn => btn.disabled = true);
-
-            try {
-                const response = await fetch('/answer', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: questionId, answer: answer, token: authToken })
-                });
-
-                if (response.ok) {
-                    showStatus('送信しました', 'success');
-                    document.getElementById('question-area').innerHTML =
-                        '<div class="no-question">送信済み</div>';
-                } else {
-                    showStatus('エラーが発生しました', 'error');
-                    buttons.forEach(btn => btn.disabled = false);
-                }
-            } catch (e) {
-                showStatus('通信エラー', 'error');
-                buttons.forEach(btn => btn.disabled = false);
-            }
-        }
-
-        function sendTextAnswer() {
-            const text = document.getElementById('text-answer').value.trim();
-            if (!text) {
-                showStatus('テキストを入力してください', 'error');
-                return;
-            }
-            sendAnswer(text);
-        }
-
-        function showStatus(message, type) {
-            const status = document.getElementById('status');
-            status.textContent = message;
-            status.className = 'status status-' + type;
-            status.classList.remove('hidden');
-        }
-
-        // 5秒ごとに新しい質問をチェック
-        if (!questionId) {
-            setInterval(() => location.reload(), 5000);
-        }
-    </script>
-</body>
-</html>
-"""
+PIN_HTML = """<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tapback</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh;display:flex;align-items:center;justify-content:center}}
+.c{{max-width:320px;width:100%;padding:20px;text-align:center}}
+.l{{font-size:2rem;margin-bottom:1.5rem;color:#8b5cf6}}
+.p{{width:100%;padding:1.2rem;font-size:2rem;text-align:center;letter-spacing:0.8rem;border:1px solid #30363d;border-radius:8px;background:#161b22;color:#c9d1d9;margin-bottom:1rem}}
+.b{{width:100%;padding:1rem;font-size:1.1rem;border:none;border-radius:8px;background:#8b5cf6;color:#fff;cursor:pointer}}
+.e{{color:#f85149;margin-top:1rem}}
+</style></head>
+<body><div class="c">
+<div class="l">Tapback</div>
+<form method="POST" action="/auth">
+<input type="text" name="pin" class="p" maxlength="4" inputmode="numeric" placeholder="----" required autofocus>
+<button type="submit" class="b">認証</button>
+</form>{error}
+</div></body></html>"""
 
 
-def is_authenticated(req):
-    """リクエストが認証済みか確認"""
-    token = req.cookies.get("tapback_token")
-    return token in authenticated_tokens
+def tmux_send(text: str):
+    """tmuxセッションにキー入力を送信"""
+    result = subprocess.run(
+        ["tmux", "send-keys", "-t", SESSION_NAME, text, "Enter"],
+        capture_output=True,
+        text=True,
+    )
+    print(f"[tapback] send '{text}' -> rc={result.returncode}, err={result.stderr}")
 
 
-@app.route("/")
-def index():
-    """スマホ用UIを表示"""
-    # 認証チェック
-    if not is_authenticated(request):
-        return render_template_string(PIN_TEMPLATE, error=None)
-
-    token = request.cookies.get("tapback_token")
-    with question_lock:
-        q = (
-            current_question
-            if current_question and current_question["status"] == "waiting"
-            else None
-        )
-    return render_template_string(HTML_TEMPLATE, question=q, token=token)
+def tmux_capture() -> str:
+    """tmuxセッションの出力を取得"""
+    result = subprocess.run(
+        ["tmux", "capture-pane", "-t", SESSION_NAME, "-p", "-S", "-100"],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout
 
 
-@app.route("/auth", methods=["POST"])
-def auth():
-    """PIN認証"""
-    pin = request.form.get("pin", "")
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    token = request.cookies.get("tapback_token", "")
+    if token not in authenticated_tokens:
+        return HTMLResponse(PIN_HTML.format(error=""))
+    return HTMLResponse(HTML)
 
+
+@app.post("/auth")
+async def auth(pin: str = Form(...)):
     if pin == session_pin:
-        # 認証成功: トークン発行
         token = secrets.token_hex(16)
         authenticated_tokens.add(token)
-
-        response = make_response(
-            render_template_string(HTML_TEMPLATE, question=None, token=token)
-        )
-        response.set_cookie(
-            "tapback_token", token, httponly=True, samesite="Strict", max_age=86400
-        )
+        response = RedirectResponse(url="/", status_code=303)
+        response.set_cookie("tapback_token", token, httponly=True, max_age=86400)
         return response
-    else:
-        return render_template_string(PIN_TEMPLATE, error="PINが間違っています")
+    return HTMLResponse(PIN_HTML.format(error='<div class="e">PINが違います</div>'))
 
 
-@app.route("/ask", methods=["POST"])
-def ask():
-    """質問を登録"""
-    global current_question
+@app.websocket("/ws")
+async def ws_endpoint(websocket: WebSocket):
+    print("[tapback] WebSocket接続要求")
+    await websocket.accept()
+    print("[tapback] WebSocket accepted")
 
-    data = request.get_json()
-    message = data.get("message", "")
-    q_type = data.get("type", "yesno")
-    timeout = data.get("timeout", 300)
+    token = ""
+    for h in websocket.headers.raw:
+        if h[0] == b"cookie":
+            for c in h[1].decode().split(";"):
+                if "tapback_token=" in c:
+                    token = c.split("=")[1].strip()
 
-    if not message:
-        return jsonify({"error": "message is required"}), 400
+    print(
+        f"[tapback] token={token[:8] if token else 'none'}..., authenticated={token in authenticated_tokens}"
+    )
 
-    if q_type not in ("yesno", "text"):
-        return jsonify({"error": "type must be yesno or text"}), 400
-
-    question_id = str(uuid.uuid4())
-
-    with question_lock:
-        current_question = {
-            "id": question_id,
-            "message": message,
-            "type": q_type,
-            "status": "waiting",
-            "answer": None,
-            "timeout": timeout,
-            "created_at": time.time(),
-        }
-
-    return jsonify({"id": question_id})
-
-
-@app.route("/wait/<question_id>")
-def wait(question_id):
-    """回答が来るまでブロックして待機"""
-    global current_question
-
-    while True:
-        with question_lock:
-            if current_question is None or current_question["id"] != question_id:
-                return jsonify({"error": "question not found"}), 404
-
-            # タイムアウトチェック
-            elapsed = time.time() - current_question["created_at"]
-            if elapsed > current_question["timeout"]:
-                current_question["status"] = "timeout"
-                return jsonify({"status": "timeout"}), 408
-
-            # 回答済みチェック
-            if current_question["status"] == "answered":
-                answer = current_question["answer"]
-                current_question = None  # クリア
-                return jsonify({"answer": answer})
-
-        time.sleep(0.5)
-
-
-@app.route("/answer", methods=["POST"])
-def answer():
-    """スマホからの回答送信"""
-    global current_question
-
-    data = request.get_json()
-    question_id = data.get("id")
-    answer_value = data.get("answer")
-    token = data.get("token")
-
-    # 認証チェック
     if token not in authenticated_tokens:
-        return jsonify({"error": "unauthorized"}), 401
+        print("[tapback] 認証失敗、接続を閉じます")
+        await websocket.close(code=4001)
+        return
 
-    if not question_id or answer_value is None:
-        return jsonify({"error": "id and answer are required"}), 400
+    connected_clients.append(websocket)
+    print(f"[tapback] クライアント追加、合計{len(connected_clients)}人")
 
-    with question_lock:
-        if current_question is None or current_question["id"] != question_id:
-            return jsonify({"error": "question not found"}), 404
-
-        if current_question["status"] != "waiting":
-            return jsonify({"error": "question already answered or timeout"}), 400
-
-        current_question["status"] = "answered"
-        current_question["answer"] = answer_value
-
-    return jsonify({"success": True})
-
-
-@app.route("/status")
-def status():
-    """現在の状態を取得（デバッグ用）"""
-    with question_lock:
-        return jsonify({"question": current_question})
-
-
-def get_local_ips():
-    """全てのローカルIPアドレスとインターフェース名を取得"""
-    import subprocess
-
-    ips = []
     try:
-        result = subprocess.run(
-            ["ifconfig"], capture_output=True, text=True, timeout=5
-        )
-        current_iface = ""
+        output = tmux_capture()
+        await websocket.send_json({"t": "o", "c": output})
+        last_output = output
+
+        import asyncio
+
+        async def poll_output():
+            nonlocal last_output
+            while True:
+                await asyncio.sleep(1)
+                output = tmux_capture()
+                if output != last_output:
+                    last_output = output
+                    try:
+                        await websocket.send_json({"t": "o", "c": output})
+                    except Exception:
+                        break
+
+        poll_task = asyncio.create_task(poll_output())
+
+        while True:
+            data = await websocket.receive_json()
+            if data.get("t") == "i":
+                content = data.get("c", "")
+                tmux_send(content)
+
+        poll_task.cancel()
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"[tapback] エラー: {e}")
+    finally:
+        if websocket in connected_clients:
+            connected_clients.remove(websocket)
+
+
+def get_local_ip():
+    try:
+        result = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=5)
         for line in result.stdout.split("\n"):
-            if line and not line.startswith("\t") and not line.startswith(" "):
-                current_iface = line.split(":")[0]
             if "inet " in line and "127.0.0.1" not in line:
                 parts = line.strip().split()
                 idx = parts.index("inet") + 1
                 if idx < len(parts):
                     ip = parts[idx]
-                    # インターフェース名をわかりやすく
-                    if current_iface.startswith("en"):
-                        label = "Wi-Fi"
-                    elif current_iface.startswith("utun") or current_iface.startswith("tun"):
-                        label = "VPN"
-                    elif current_iface.startswith("bridge"):
-                        label = "VM"
-                    else:
-                        label = current_iface
-                    # Wi-Fi (192.168.x.x) を優先
-                    if ip.startswith("192.168.0."):
-                        ips.insert(0, (ip, label))
-                    else:
-                        ips.append((ip, label))
-    except:
-        pass
+                    if ip.startswith("192.168."):
+                        return ip
+        return "127.0.0.1"
+    except Exception:
+        return "127.0.0.1"
 
-    return ips if ips else [("127.0.0.1", "Local")]
+
+def save_server_info(port: int):
+    tapback_dir = Path.cwd() / ".tapback"
+    tapback_dir.mkdir(exist_ok=True)
+    (tapback_dir / "server.json").write_text(json.dumps({"port": port}))
+
+
+def cleanup():
+    info_path = Path.cwd() / ".tapback" / "server.json"
+    if info_path.exists():
+        info_path.unlink()
+    # tmuxセッションを終了
+    subprocess.run(["tmux", "kill-session", "-t", SESSION_NAME], capture_output=True)
 
 
 def main():
-    """CLI エントリーポイント"""
     global session_pin
-
     import argparse
+    import atexit
 
-    parser = argparse.ArgumentParser(description="Tapback Server")
-    parser.add_argument(
-        "--port", "-p", type=int, default=8080, help="ポート番号 (default: 8080)"
-    )
-    parser.add_argument(
-        "--host", "-H", type=str, default="0.0.0.0", help="ホスト (default: 0.0.0.0)"
-    )
-    parser.add_argument("--no-auth", action="store_true", help="PIN認証を無効化")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", "-p", type=int, default=8080)
+    parser.add_argument("--no-auth", action="store_true")
+    parser.add_argument("--kill", "-k", action="store_true")
+    parser.add_argument("command", nargs="*")
     args = parser.parse_args()
 
-    # PIN生成
+    if args.kill:
+        cleanup()
+        print("終了しました")
+        return
+
+    # 常にクリーンアップしてから開始
+    cleanup()
+
+    if not args.command:
+        print("Usage: tapback-server claude")
+        return
+
+    # tmuxがインストールされているか確認
+    if subprocess.run(["which", "tmux"], capture_output=True).returncode != 0:
+        print("エラー: tmuxがインストールされていません")
+        print("  brew install tmux")
+        sys.exit(1)
+
+    # 既存のセッションを終了
+    subprocess.run(["tmux", "kill-session", "-t", SESSION_NAME], capture_output=True)
+
+    # 新しいtmuxセッションを作成してコマンドを実行
+    cmd = " ".join(args.command)
+    subprocess.run(["tmux", "new-session", "-d", "-s", SESSION_NAME, cmd])
+
+    save_server_info(args.port)
+    atexit.register(cleanup)
+
     if args.no_auth:
         session_pin = None
-        # 認証なしモード: ダミートークンを追加
         authenticated_tokens.add("no-auth")
     else:
         session_pin = f"{random.randint(0, 9999):04d}"
 
-    local_ips = get_local_ips()
+    ip = get_local_ip()
     print(f"\n{'=' * 50}")
-    print(f"  Tapback Server")
+    print("  Tapback")
     print(f"{'=' * 50}")
-    print(f"  Local: http://127.0.0.1:{args.port}")
-    for ip, label in local_ips:
-        print(f"  {label}: http://{ip}:{args.port}")
+    print(f"  http://{ip}:{args.port}")
     if session_pin:
-        print(f"{'=' * 50}")
         print(f"  PIN: {session_pin}")
     print(f"{'=' * 50}")
-    print(f"  スマホからNetwork URLにアクセスしてください")
+    print(f"  tmux attach -t {SESSION_NAME}  # ローカルで確認")
     print(f"{'=' * 50}\n")
 
-    app.run(host=args.host, port=args.port, debug=False, threaded=True)
+    uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":
