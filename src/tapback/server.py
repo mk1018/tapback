@@ -271,6 +271,8 @@ def main():
     # 新しいtmuxセッションを作成してコマンドを実行
     cmd = " ".join(args.command)
     subprocess.run(["tmux", "new-session", "-d", "-s", SESSION_NAME, cmd])
+    # コマンド終了後もセッションを維持
+    subprocess.run(["tmux", "set-option", "-t", SESSION_NAME, "remain-on-exit", "on"])
 
     save_server_info(args.port)
     atexit.register(cleanup)
