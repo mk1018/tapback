@@ -1,111 +1,26 @@
 #!/usr/bin/env python3
-"""
-Tapback Server - tmuxセッション経由でターミナルを同期
-"""
+"""Tapback Server - Sync terminal via tmux session."""
 
 import sys
 import subprocess
 import secrets
 import random
 import json
+import uvicorn
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-import uvicorn
+from tapback.constants import SESSION_NAME, HTML, PIN_HTML
 
 app = FastAPI()
 
-SESSION_NAME = "tapback"
-terminal_output = []
-MAX_BUFFER = 200
 connected_clients: list[WebSocket] = []
 session_pin = None
 authenticated_tokens = set()
 
-HTML = """<!DOCTYPE html>
-<html><head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Tapback</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;overflow:hidden}
-body{font-family:-apple-system,BlinkMacSystemFont,monospace;background:#0d1117;color:#c9d1d9;display:flex;flex-direction:column}
-#h{padding:10px 14px;background:#161b22;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
-#h .t{color:#8b5cf6;font-weight:bold;font-size:18px}
-#h .s{font-size:13px}
-.on{color:#3fb950}.off{color:#f85149}
-#term{flex:1;overflow-y:auto;padding:14px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-all;min-height:0;font-family:monospace}
-#in{padding:12px;background:#161b22;border-top:1px solid #30363d;flex-shrink:0}
-.row{display:flex;gap:8px;align-items:center}
-#txt{flex:1;padding:12px 14px;font-size:16px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:10px;min-width:0}
-#txt:focus{outline:none;border-color:#8b5cf6}
-.btn{padding:12px 18px;font-size:15px;font-weight:600;border:none;border-radius:10px;cursor:pointer}
-.bsend{background:#8b5cf6;color:#fff}
-.benter{background:#30363d;color:#c9d1d9}
-.quick{margin-bottom:8px}
-.bq{flex:1;background:#21262d;color:#c9d1d9}
-</style></head>
-<body>
-<div id="h"><span class="t">Tapback</span><span class="s" id="st">...</span></div>
-<div id="term"></div>
-<div id="in">
-<div class="row quick">
-<button class="btn bq" data-v="0">0</button>
-<button class="btn bq" data-v="1">1</button>
-<button class="btn bq" data-v="2">2</button>
-<button class="btn bq" data-v="3">3</button>
-<button class="btn bq" data-v="4">4</button>
-</div>
-<div class="row">
-<input type="text" id="txt" placeholder="入力..." autocomplete="off">
-<button class="btn bsend" id="b4">送信</button>
-</div>
-</div>
-<script>
-const term=document.getElementById('term'),txt=document.getElementById('txt'),st=document.getElementById('st');
-let ws,lastInput='';
-function connect(){
-const p=location.protocol==='https:'?'wss:':'ws:';
-ws=new WebSocket(p+'//'+location.host+'/ws');
-ws.onopen=()=>{st.textContent='接続済';st.className='s on';txt.value=lastInput};
-ws.onmessage=(e)=>{const d=JSON.parse(e.data);if(d.t==='o'){term.textContent=d.c;term.scrollTop=term.scrollHeight}};
-ws.onclose=()=>{st.textContent='再接続...';st.className='s off';setTimeout(connect,2000)};
-ws.onerror=()=>ws.close();
-}
-function send(v){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'i',c:v}))}
-document.getElementById('b4').onclick=()=>{lastInput=txt.value;send(txt.value);txt.value=''};
-txt.onkeypress=(e)=>{if(e.key==='Enter'){lastInput=txt.value;send(txt.value);txt.value=''}};
-document.querySelectorAll('.bq').forEach(b=>b.onclick=()=>send(b.dataset.v));
-connect();
-</script>
-</body></html>"""
-
-PIN_HTML = """<!DOCTYPE html>
-<html><head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tapback</title>
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh;display:flex;align-items:center;justify-content:center}}
-.c{{max-width:320px;width:100%;padding:20px;text-align:center}}
-.l{{font-size:2rem;margin-bottom:1.5rem;color:#8b5cf6}}
-.p{{width:100%;padding:1.2rem;font-size:2rem;text-align:center;letter-spacing:0.8rem;border:1px solid #30363d;border-radius:8px;background:#161b22;color:#c9d1d9;margin-bottom:1rem}}
-.b{{width:100%;padding:1rem;font-size:1.1rem;border:none;border-radius:8px;background:#8b5cf6;color:#fff;cursor:pointer}}
-.e{{color:#f85149;margin-top:1rem}}
-</style></head>
-<body><div class="c">
-<div class="l">Tapback</div>
-<form method="POST" action="/auth">
-<input type="text" name="pin" class="p" maxlength="4" inputmode="numeric" placeholder="----" required autofocus>
-<button type="submit" class="b">認証</button>
-</form>{error}
-</div></body></html>"""
-
 
 def tmux_send(text: str):
-    """tmuxセッションにキー入力を送信"""
+    """Send key input to tmux session."""
     if text:
         subprocess.run(
             ["tmux", "send-keys", "-t", SESSION_NAME, "-l", text],
@@ -121,7 +36,7 @@ def tmux_send(text: str):
 
 
 def tmux_capture() -> str:
-    """tmuxセッションの出力を取得"""
+    """Capture tmux session output."""
     result = subprocess.run(
         ["tmux", "capture-pane", "-t", SESSION_NAME, "-p", "-S", "-100"],
         capture_output=True,
@@ -146,12 +61,12 @@ async def auth(pin: str = Form(...)):
         response = RedirectResponse(url="/", status_code=303)
         response.set_cookie("tapback_token", token, httponly=True, max_age=86400)
         return response
-    return HTMLResponse(PIN_HTML.format(error='<div class="e">PINが違います</div>'))
+    return HTMLResponse(PIN_HTML.format(error='<div class="e">Invalid PIN</div>'))
 
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
-    print("[tapback] WebSocket接続要求")
+    print("[tapback] WebSocket connection request")
     await websocket.accept()
     print("[tapback] WebSocket accepted")
 
@@ -167,12 +82,12 @@ async def ws_endpoint(websocket: WebSocket):
     )
 
     if token not in authenticated_tokens:
-        print("[tapback] 認証失敗、接続を閉じます")
+        print("[tapback] Auth failed, closing connection")
         await websocket.close(code=4001)
         return
 
     connected_clients.append(websocket)
-    print(f"[tapback] クライアント追加、合計{len(connected_clients)}人")
+    print(f"[tapback] Client added, total {len(connected_clients)}")
 
     try:
         output = tmux_capture()
@@ -200,13 +115,12 @@ async def ws_endpoint(websocket: WebSocket):
             if data.get("t") == "i":
                 content = data.get("c", "")
                 tmux_send(content)
-
-        poll_task.cancel()
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        print(f"[tapback] エラー: {e}")
+        print(f"[tapback] Error: {e}")
     finally:
+        poll_task.cancel()
         if websocket in connected_clients:
             connected_clients.remove(websocket)
 
@@ -237,7 +151,7 @@ def cleanup():
     info_path = Path.cwd() / ".tapback" / "server.json"
     if info_path.exists():
         info_path.unlink()
-    # tmuxセッションを終了
+    # Kill tmux session
     subprocess.run(["tmux", "kill-session", "-t", SESSION_NAME], capture_output=True)
 
 
@@ -255,26 +169,26 @@ def main():
 
     if args.kill:
         cleanup()
-        print("終了しました")
+        print("Stopped")
         return
 
-    # 常にクリーンアップしてから開始
+    # Always cleanup before start
     cleanup()
 
     if not args.command:
         print("Usage: tapback-server claude")
         return
 
-    # tmuxがインストールされているか確認
+    # Check if tmux is installed
     if subprocess.run(["which", "tmux"], capture_output=True).returncode != 0:
-        print("エラー: tmuxがインストールされていません")
+        print("Error: tmux is not installed")
         print("  brew install tmux")
         sys.exit(1)
 
-    # 既存のセッションを終了
+    # Kill existing session
     subprocess.run(["tmux", "kill-session", "-t", SESSION_NAME], capture_output=True)
 
-    # 新しいtmuxセッションを作成（シェルが残るのでコマンド終了後も維持される）
+    # Create new tmux session (shell persists after command exit)
     cmd = " ".join(args.command)
     subprocess.run(["tmux", "new-session", "-d", "-s", SESSION_NAME])
     subprocess.run(["tmux", "send-keys", "-t", SESSION_NAME, cmd, "Enter"])
@@ -296,7 +210,7 @@ def main():
     if session_pin:
         print(f"  PIN: {session_pin}")
     print(f"{'=' * 50}")
-    print(f"  tmux attach -t {SESSION_NAME}  # ローカルで確認")
+    print(f"  tmux attach -t {SESSION_NAME}  # Local access")
     print(f"{'=' * 50}\n")
 
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")

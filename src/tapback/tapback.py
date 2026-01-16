@@ -4,12 +4,12 @@ Tapback - Human-in-the-Loop Input Tool
 Python API & CLI
 
 Usage (CLI):
-    tapback "本当に削除しますか？" --type yesno --timeout 300
-    tapback "修正内容を入力してください" --type text --timeout 600
+    tapback "Delete this file?" --type yesno --timeout 300
+    tapback "Enter your modifications" --type text --timeout 600
 
 Usage (Python API):
     from tapback import ask
-    result = ask("このPRをマージしますか？", type="yesno", timeout=300)
+    result = ask("Merge this PR?", type="yesno", timeout=300)
 """
 
 import sys
@@ -17,15 +17,15 @@ import argparse
 import requests
 from typing import Optional, Literal
 
-# デフォルト設定
+# Default settings
 DEFAULT_SERVER = "http://127.0.0.1:8080"
 DEFAULT_TIMEOUT = 300
 
 
 def get_server_url() -> Optional[str]:
     """
-    .tapback/server.jsonからサーバーURLを取得
-    存在しなければNoneを返す
+    Get server URL from .tapback/server.json
+    Returns None if not found
     """
     import os
     import json
@@ -43,13 +43,13 @@ def get_server_url() -> Optional[str]:
 
 
 class TapbackError(Exception):
-    """Tapback エラー"""
+    """Tapback error."""
 
     pass
 
 
 class TapbackTimeout(TapbackError):
-    """タイムアウトエラー"""
+    """Timeout error."""
 
     pass
 
@@ -61,22 +61,22 @@ def ask(
     server: str = DEFAULT_SERVER,
 ) -> Optional[str]:
     """
-    スマホに質問を送信し、回答を待機する
+    Send question to mobile and wait for answer.
 
     Args:
-        message: 質問文
-        type: 質問タイプ ("yesno" or "text")
-        timeout: タイムアウト秒数
-        server: サーバーURL
+        message: Question text
+        type: Question type ("yesno" or "text")
+        timeout: Timeout in seconds
+        server: Server URL
 
     Returns:
-        回答 ("yes", "no", またはテキスト)
+        Answer ("yes", "no", or text)
 
     Raises:
-        TapbackTimeout: タイムアウト時
-        TapbackError: その他のエラー時
+        TapbackTimeout: On timeout
+        TapbackError: On other errors
     """
-    # 質問を登録
+    # Register question
     try:
         response = requests.post(
             f"{server}/ask",
@@ -84,80 +84,80 @@ def ask(
             timeout=10,
         )
     except requests.exceptions.ConnectionError:
-        raise TapbackError(f"サーバーに接続できません: {server}")
+        raise TapbackError(f"Cannot connect to server: {server}")
     except requests.exceptions.Timeout:
-        raise TapbackError("サーバーへの接続がタイムアウトしました")
+        raise TapbackError("Connection to server timed out")
 
     if response.status_code != 200:
-        raise TapbackError(f"質問の登録に失敗: {response.text}")
+        raise TapbackError(f"Failed to register question: {response.text}")
 
     question_id = response.json().get("id")
     if not question_id:
-        raise TapbackError("質問IDが取得できませんでした")
+        raise TapbackError("Failed to get question ID")
 
-    # 回答を待機
+    # Wait for answer
     try:
         wait_response = requests.get(
             f"{server}/wait/{question_id}",
-            timeout=timeout + 10,  # サーバー側タイムアウト + マージン
+            timeout=timeout + 10,  # Server timeout + margin
         )
     except requests.exceptions.Timeout:
-        raise TapbackTimeout("回答待機がタイムアウトしました")
+        raise TapbackTimeout("Answer wait timed out")
     except requests.exceptions.ConnectionError:
-        raise TapbackError("サーバーとの接続が切断されました")
+        raise TapbackError("Connection to server lost")
 
     if wait_response.status_code == 408:
-        raise TapbackTimeout("タイムアウト: 回答がありませんでした")
+        raise TapbackTimeout("Timeout: No answer received")
 
     if wait_response.status_code != 200:
-        raise TapbackError(f"エラー: {wait_response.text}")
+        raise TapbackError(f"Error: {wait_response.text}")
 
     return wait_response.json().get("answer")
 
 
 def main():
-    """CLI エントリーポイント"""
+    """CLI entry point."""
     parser = argparse.ArgumentParser(
         prog="tapback",
-        description="Human-in-the-Loop Input Tool - スマホから回答を受け取る",
+        description="Human-in-the-Loop Input Tool - Get answers from mobile",
     )
-    parser.add_argument("message", help="質問文")
+    parser.add_argument("message", help="Question text")
     parser.add_argument(
         "-t",
         "--type",
         choices=["yesno", "text"],
         default="yesno",
-        help="質問タイプ (default: yesno)",
+        help="Question type (default: yesno)",
     )
     parser.add_argument(
         "--timeout",
         type=int,
         default=DEFAULT_TIMEOUT,
-        help=f"タイムアウト秒数 (default: {DEFAULT_TIMEOUT})",
+        help=f"Timeout in seconds (default: {DEFAULT_TIMEOUT})",
     )
     parser.add_argument(
         "-s",
         "--server",
         default=None,
-        help="サーバーURL (default: .tapback/server.jsonから取得)",
+        help="Server URL (default: from .tapback/server.json)",
     )
-    parser.add_argument("-q", "--quiet", action="store_true", help="結果のみ出力")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Output result only")
     parser.add_argument(
-        "--silent", action="store_true", help="サーバー未起動時は静かに終了"
+        "--silent", action="store_true", help="Exit silently if server not running"
     )
 
     args = parser.parse_args()
 
-    # サーバーURLを決定
+    # Determine server URL
     server = args.server or get_server_url() or DEFAULT_SERVER
 
-    # --silent モード: サーバー情報がなければ終了
+    # --silent mode: exit if no server info
     if args.silent and not get_server_url():
         sys.exit(0)
 
     if not args.quiet:
-        print(f"質問を送信中: {args.message}", file=sys.stderr)
-        print("スマホで回答してください...", file=sys.stderr)
+        print(f"Sending question: {args.message}", file=sys.stderr)
+        print("Please answer on mobile...", file=sys.stderr)
 
     try:
         result = ask(
@@ -169,24 +169,24 @@ def main():
 
         print(result)
 
-        # 終了コード: yes/text入力あり=0, no=1
+        # Exit code: yes/text input=0, no=1
         if args.type == "yesno" and result == "no":
             sys.exit(1)
         sys.exit(0)
 
     except TapbackTimeout:
         if not args.quiet:
-            print("タイムアウト", file=sys.stderr)
+            print("Timeout", file=sys.stderr)
         sys.exit(2)
 
     except TapbackError as e:
         if args.silent:
             sys.exit(0)
-        print(f"エラー: {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(3)
 
     except KeyboardInterrupt:
-        print("\n中断されました", file=sys.stderr)
+        print("\nInterrupted", file=sys.stderr)
         sys.exit(130)
 
 
